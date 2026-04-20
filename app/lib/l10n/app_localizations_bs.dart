@@ -4575,7 +4575,7 @@ class AppLocalizationsBs extends AppLocalizations {
   String get unableToLoadPlans => 'Nije moguće učitati planove';
 
   @override
-  String get checkConnectionTryAgain => 'Provjerite vezu i pokušajte ponovo';
+  String get checkConnectionTryAgain => 'Molimo provjerite vašu konekciju i pokušajte ponovno';
 
   @override
   String get useFreePlan => 'Koristi besplatni plan';
@@ -5111,7 +5111,7 @@ class AppLocalizationsBs extends AppLocalizations {
 
   @override
   String get consentDataMessage =>
-      'Nastavljanjem, vaši razgovori, snimke i lični podaci bit će sigurno pohranjeni na našim serverima. Vaši audio zapisi i transkripti se obrađuju od strane AI usluga trećih strana (uključujući Deepgram za transkripciju i OpenAI za analizu) kako bi vam pružili uvide pokretane vještačkom inteligencijom i omogućili sve funkcije aplikacije.';
+      'Nastavkom, svi podaci koje dijelite s ovom aplikacijom (uključujući vaše razgovore, snimke i osobne informacije) bit će sigurno pohranjeni na našim serverima kako bi vam omogućili AI-pogonjena uvida i omogućili sve značajke aplikacije.';
 
   @override
   String get tasksEmptyStateMessage =>
@@ -8852,18 +8852,6 @@ class AppLocalizationsBs extends AppLocalizations {
   }
 
   @override
-  String get batteryHistory => 'Baterija';
-
-  @override
-  String get noBatteryDataYet => 'Još nema podataka o bateriji';
-
-  @override
-  String get day => 'Dan';
-
-  @override
-  String get week => 'Sedmica';
-
-  @override
   String get rollbackToStableFirmware => 'Vrati se na stabilnu firmware';
 
   @override
@@ -9058,108 +9046,8 @@ class AppLocalizationsBs extends AppLocalizations {
   String get youAreOnAPaidPlan => 'Na plaćenom ste planu.';
 
   @override
-  String get chatTitle => 'Chat';
+  String get multiLanguageDetection => 'Multi-language Detection';
 
   @override
-  String get chatMessages => 'poruka';
-
-  @override
-  String get unlimitedChatThisMonth => 'Neograničene poruke ovog mjeseca';
-
-  @override
-  String chatUsedOfLimitCompute(String used, String limit) {
-    return '$used od $limit budžeta korišteno';
-  }
-
-  @override
-  String chatUsedOfLimitMessages(String used, String limit) {
-    return '$used od $limit poruka korišteno ovog mjeseca';
-  }
-
-  @override
-  String chatUsageProgress(String used, String limit) {
-    return '$used / $limit korišteno';
-  }
-
-  @override
-  String get chatLimitReachedUpgrade => 'Limit chata dostignut. Nadogradite za više poruka.';
-
-  @override
-  String get chatLimitReachedTitle => 'Limit chata dostignut';
-
-  @override
-  String chatUsageDescription(String used, String limitDisplay, String plan) {
-    return 'Koristili ste $used od $limitDisplay na planu $plan.';
-  }
-
-  @override
-  String resetsInDays(int count) {
-    return 'Resetuje se za $count dana';
-  }
-
-  @override
-  String resetsInHours(int count) {
-    return 'Resetuje se za $count sati';
-  }
-
-  @override
-  String get resetsSoon => 'Uskoro se resetuje';
-
-  @override
-  String get upgradePlan => 'Nadogradi plan';
-
-  @override
-  String get billingMonthly => 'Mjesečno';
-
-  @override
-  String get billingYearly => 'Godišnje';
-
-  @override
-  String get savePercent => 'Uštedite ~17%';
-
-  @override
-  String get popular => 'Popularno';
-
-  @override
-  String get currentPlan => 'Trenutni';
-
-  @override
-  String neoSubtitle(int count) {
-    return '$count pitanja mjesečno';
-  }
-
-  @override
-  String operatorSubtitle(int count) {
-    return '$count pitanja mjesečno';
-  }
-
-  @override
-  String get architectSubtitle => 'Napredni AI — hiljade razgovora + agentna automatizacija';
-
-  @override
-  String chatUsageCost(String used, String limit) {
-    return 'Chat: \$$used / \$$limit iskorišteno ovog mjeseca';
-  }
-
-  @override
-  String chatUsageCostNoLimit(String used) {
-    return 'Chat: \$$used iskorišteno ovog mjeseca';
-  }
-
-  @override
-  String chatUsageMessages(String used, String limit) {
-    return 'Chat: $used / $limit poruka ovog mjeseca';
-  }
-
-  @override
-  String chatUsageMessagesNoLimit(String used) {
-    return 'Chat: $used poruka ovog mjeseca';
-  }
-
-  @override
-  String get chatQuotaSubtitle => 'AI chat messages used with Omi this month.';
-
-  @override
-  String get chatQuotaExceededReply =>
-      'Dosegli ste svoj mjesečni limit. Nadogradite da nastavite razgovarati s Omi bez ograničenja.';
+  String get multiLanguageDetectionDesc => 'Detect multiple spoken languages';
 }
