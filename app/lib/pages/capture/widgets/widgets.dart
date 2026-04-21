@@ -104,8 +104,7 @@ class UpdateFirmwareCardWidget extends StatelessWidget {
       builder: (context, provider, child) {
         if (!provider.havingNewFirmware) return const SizedBox();
 
-        final isOmiGlass =
-            provider.pairedDevice?.type == DeviceType.openglass ||
+        final isOmiGlass = provider.pairedDevice?.type == DeviceType.openglass ||
             (provider.pairedDevice?.name.toLowerCase().contains('glass') ?? false);
 
         return Stack(
@@ -207,6 +206,7 @@ getTranscriptWidget(
   Function(String, int)? editSegment,
   Map<String, SpeakerLabelSuggestionEvent> suggestions = const {},
   List<String> taggingSegmentIds = const [],
+  Set<String> translatingSegmentIds = const {},
   Function(SpeakerLabelSuggestionEvent)? onAcceptSuggestion,
   String searchQuery = '',
   int currentResultIndex = -1,
@@ -239,6 +239,7 @@ getTranscriptWidget(
       editSegment: editSegment,
       suggestions: suggestions,
       taggingSegmentIds: taggingSegmentIds,
+      translatingSegmentIds: translatingSegmentIds,
       onAcceptSuggestion: onAcceptSuggestion,
       searchQuery: searchQuery,
       currentResultIndex: currentResultIndex,
