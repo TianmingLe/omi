@@ -159,7 +159,11 @@ class _VertexGeminiProxy:
             )
         # Platform calls → Vertex AI (ADC auth, EDP/PT discounts)
         if _GCP_PROJECT:
-            token = _get_vertex_access_token()
+            try:
+                token = _get_vertex_access_token()
+            except Exception:
+                logger.warning('Vertex AI credentials unavailable, falling back to OpenRouter')
+                return self._default
             # Strip OpenRouter-specific kwargs before building Vertex client
             vertex_kwargs = {
                 k: v for k, v in self._ctor_kwargs.items() if k not in ('api_key', 'base_url', 'default_headers')
@@ -776,6 +780,8 @@ def gemini_embed_query(text: str) -> List[float]:
         return resp.json()['embedding']['values']
 
     # Platform calls: Vertex AI endpoint with ADC token
+    if not _GCP_PROJECT:
+        raise RuntimeError('Gemini embedding requires either a BYOK key or GCP project configuration')
     loc = os.environ.get('GCP_EMBEDDING_LOCATION', 'us-central1')
     url = (
         f'https://aiplatform.googleapis.com/v1beta1/projects/{_GCP_PROJECT}'
