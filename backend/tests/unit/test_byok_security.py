@@ -235,27 +235,36 @@ class TestCacheKeyHashing:
 
 class TestGeminiKeyNotInUrl:
     @patch('utils.llm.clients.httpx.post')
+    @patch('utils.llm.clients._get_vertex_access_token', return_value='vertex-test-token')
     @patch('utils.llm.clients.get_byok_key', return_value=None)
-    def test_gemini_embed_uses_header_not_url_param(self, mock_byok, mock_post):
+    def test_gemini_embed_vertex_uses_bearer_auth(self, mock_byok, mock_vertex_token, mock_post):
+        """Platform calls (no BYOK) route to Vertex AI with Bearer token."""
+        import utils.llm.clients as mod
+
         mock_response = MagicMock()
         mock_response.json.return_value = {'embedding': {'values': [0.1, 0.2]}}
         mock_response.raise_for_status = MagicMock()
         mock_post.return_value = mock_response
 
-        from utils.llm.clients import gemini_embed_query
-
-        gemini_embed_query('test query')
+        orig_project = mod._GCP_PROJECT
+        try:
+            mod._GCP_PROJECT = 'test-project'
+            mod.gemini_embed_query('test query')
+        finally:
+            mod._GCP_PROJECT = orig_project
 
         call_args = mock_post.call_args
         url = call_args[0][0] if call_args[0] else call_args[1].get('url', '')
+        assert 'aiplatform.googleapis.com' in url
         assert '?key=' not in url
-        assert 'key=' not in url
         headers = call_args[1].get('headers', {})
-        assert 'x-goog-api-key' in headers
+        assert headers.get('Authorization') == 'Bearer vertex-test-token'
+        assert 'x-goog-api-key' not in headers
 
     @patch('utils.llm.clients.httpx.post')
     @patch('utils.llm.clients.get_byok_key', return_value='user-gemini-key-secret')
-    def test_byok_gemini_key_not_in_url(self, mock_byok, mock_post):
+    def test_byok_gemini_uses_ai_studio(self, mock_byok, mock_post):
+        """BYOK users route to AI Studio with their own API key in header."""
         mock_response = MagicMock()
         mock_response.json.return_value = {'embedding': {'values': [0.1, 0.2]}}
         mock_response.raise_for_status = MagicMock()
@@ -267,6 +276,7 @@ class TestGeminiKeyNotInUrl:
 
         call_args = mock_post.call_args
         url = call_args[0][0] if call_args[0] else call_args[1].get('url', '')
+        assert 'generativelanguage.googleapis.com' in url
         assert 'user-gemini-key-secret' not in url
         headers = call_args[1].get('headers', {})
         assert headers.get('x-goog-api-key') == 'user-gemini-key-secret'
@@ -593,14 +603,14 @@ class TestCacheRouting:
         assert inst1 is inst2
 
     def test_gemini_wrapper_routes_to_byok(self):
-        from utils.llm.clients import _BYOKChatWrapper, _GEMINI_OPENAI_BASE_URL, _wrap_byok
+        from utils.llm.clients import _BYOKChatWrapper, _GEMINI_AI_STUDIO_BASE_URL, _wrap_byok
 
         mock_default = MagicMock()
         wrapper = _wrap_byok(mock_default, 'gemini-2.5-flash-lite', 'gemini', {})
         assert isinstance(wrapper, _BYOKChatWrapper)
         with patch('utils.llm.clients.get_byok_key', side_effect=lambda p: 'AIza-byok-key' if p == 'gemini' else None):
             resolved = wrapper._resolve()
-        assert resolved.openai_api_base == _GEMINI_OPENAI_BASE_URL
+        assert resolved.openai_api_base == _GEMINI_AI_STUDIO_BASE_URL
 
     def test_gemini_wrapper_falls_back_to_default(self):
         from utils.llm.clients import _BYOKChatWrapper, _wrap_byok
@@ -614,7 +624,7 @@ class TestCacheRouting:
 
     def test_openrouter_wrapper_byok_routes_to_gemini_direct(self):
         """OpenRouter BYOK wraps to Gemini direct — must not forward OpenRouter api_key."""
-        from utils.llm.clients import _BYOKChatWrapper, _GEMINI_OPENAI_BASE_URL, _wrap_byok
+        from utils.llm.clients import _BYOKChatWrapper, _GEMINI_AI_STUDIO_BASE_URL, _wrap_byok
 
         mock_default = MagicMock()
         or_kwargs = {
@@ -629,7 +639,7 @@ class TestCacheRouting:
         with patch('utils.llm.clients.get_byok_key', side_effect=lambda p: 'AIza-byok-key' if p == 'gemini' else None):
             resolved = wrapper._resolve()
         # Must use Gemini base URL, not OpenRouter
-        assert resolved.openai_api_base == _GEMINI_OPENAI_BASE_URL
+        assert resolved.openai_api_base == _GEMINI_AI_STUDIO_BASE_URL
         # Must not contain the OpenRouter api_key
         assert resolved.openai_api_key != 'sk-or-openrouter-key'
 
