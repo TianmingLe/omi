@@ -504,10 +504,16 @@ def _get_or_create_gemini_llm(model_name: str, streaming: bool = False) -> _BYOK
                     token = _get_vertex_access_token()
                     return _cached_openai_chat(model_name, token, vertex_kwargs)
                 except Exception:
+                    # Only fall back to AI Studio if GEMINI_API_KEY is actually available.
+                    # In production Helm config, the key is removed — fail fast instead
+                    # of creating an unauthenticated client that errors downstream.
+                    gemini_key = os.environ.get('GEMINI_API_KEY', '')
+                    if not gemini_key:
+                        raise
                     logger.warning('Vertex AI credentials unavailable, falling back to GEMINI_API_KEY')
                     return ChatOpenAI(
                         model=model_name,
-                        api_key=os.environ.get('GEMINI_API_KEY', ''),
+                        api_key=gemini_key,
                         base_url=_GEMINI_AI_STUDIO_BASE_URL,
                         **kwargs,
                     )
