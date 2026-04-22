@@ -731,13 +731,24 @@ class TestRuntimeProviderRouting:
         base_url = getattr(llm, 'openai_api_base', None) or ''
         assert 'openrouter' not in base_url
 
-    def test_gemini_feature_routes_to_gemini_endpoint(self):
-        """Free-text features on gemini-2.5-flash-lite should route via Gemini (Vertex AI or AI Studio)."""
-        llm = get_llm('followup')
-        # get_llm() eagerly resolves BYOK; result is a ChatOpenAI routed to Gemini
-        base_url = llm.openai_api_base
-        is_gemini = 'generativelanguage.googleapis.com' in base_url or 'aiplatform.googleapis.com' in base_url
-        assert is_gemini, f'followup must use Gemini base URL, got: {base_url}'
+    @patch.dict(os.environ, {'GEMINI_API_KEY': 'test-gemini-key'})
+    def test_gemini_feature_routes_to_gemini_sdk(self):
+        """Free-text features on gemini-2.5-flash-lite should route via ChatGoogleGenerativeAI SDK."""
+        from langchain_google_genai import ChatGoogleGenerativeAI
+
+        import utils.llm.clients as mod
+
+        orig_cache = dict(mod._llm_cache)
+        try:
+            mod._llm_cache.clear()
+            llm = get_llm('followup')
+            # get_llm() eagerly resolves BYOK; result is ChatGoogleGenerativeAI (Vertex or AI Studio)
+            assert isinstance(
+                llm, ChatGoogleGenerativeAI
+            ), f'followup must use ChatGoogleGenerativeAI, got: {type(llm)}'
+        finally:
+            mod._llm_cache.clear()
+            mod._llm_cache.update(orig_cache)
 
     def test_openglass_routes_to_openai(self):
         """openglass (vision) should route to OpenAI gpt-4.1-mini."""
