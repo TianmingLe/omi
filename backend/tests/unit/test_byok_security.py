@@ -235,8 +235,10 @@ class TestCacheKeyHashing:
 
 class TestGeminiKeyNotInUrl:
     @patch('utils.llm.clients.httpx.post')
+    @patch('utils.llm.clients._get_vertex_access_token', return_value='vertex-test-token')
     @patch('utils.llm.clients.get_byok_key', return_value=None)
-    def test_gemini_embed_uses_header_not_url_param(self, mock_byok, mock_post):
+    def test_gemini_embed_vertex_uses_bearer_auth(self, mock_byok, mock_vertex_token, mock_post):
+        """Platform calls (no BYOK) route to Vertex AI with Bearer token."""
         mock_response = MagicMock()
         mock_response.json.return_value = {'embedding': {'values': [0.1, 0.2]}}
         mock_response.raise_for_status = MagicMock()
@@ -248,14 +250,17 @@ class TestGeminiKeyNotInUrl:
 
         call_args = mock_post.call_args
         url = call_args[0][0] if call_args[0] else call_args[1].get('url', '')
+        assert 'aiplatform.googleapis.com' in url
+        assert 'generativelanguage.googleapis.com' not in url
         assert '?key=' not in url
-        assert 'key=' not in url
         headers = call_args[1].get('headers', {})
-        assert 'x-goog-api-key' in headers
+        assert headers.get('Authorization') == 'Bearer vertex-test-token'
+        assert 'x-goog-api-key' not in headers
 
     @patch('utils.llm.clients.httpx.post')
     @patch('utils.llm.clients.get_byok_key', return_value='user-gemini-key-secret')
-    def test_byok_gemini_key_not_in_url(self, mock_byok, mock_post):
+    def test_byok_gemini_uses_ai_studio(self, mock_byok, mock_post):
+        """BYOK users route to AI Studio with their own API key in header."""
         mock_response = MagicMock()
         mock_response.json.return_value = {'embedding': {'values': [0.1, 0.2]}}
         mock_response.raise_for_status = MagicMock()
@@ -267,6 +272,7 @@ class TestGeminiKeyNotInUrl:
 
         call_args = mock_post.call_args
         url = call_args[0][0] if call_args[0] else call_args[1].get('url', '')
+        assert 'generativelanguage.googleapis.com' in url
         assert 'user-gemini-key-secret' not in url
         headers = call_args[1].get('headers', {})
         assert headers.get('x-goog-api-key') == 'user-gemini-key-secret'
