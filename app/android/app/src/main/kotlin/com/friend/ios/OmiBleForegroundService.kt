@@ -84,16 +84,11 @@ class OmiBleForegroundService : Service() {
 
             val inst = instance
             if (inst != null) {
-                // When the OS's CDM fires EVENT_BLE_APPEARED, the device is definitely
-                // visible right now — a stuck autoConnect=true passive scan may have
-                // missed it. Abandon any pending/stuck attempt and try a fresh connect.
-                if (caller.startsWith("CompanionSvc")) {
-                    Log.d(TAG, "startService($caller): service running, forcing reconnect for $deviceAddress")
-                    inst.forceReconnect(deviceAddress, requiresBond, caller)
-                } else {
-                    Log.d(TAG, "startService($caller): service already running, managing $deviceAddress directly")
-                    inst.manageDevice(deviceAddress, requiresBond)
-                }
+                // Service already running — any startService call is effectively a
+                // "please (re)connect this device" signal. Always force a fresh attempt
+                // so a stuck autoConnect=true passive scan doesn't silently swallow it.
+                Log.d(TAG, "startService($caller): service running, forcing reconnect for $deviceAddress")
+                inst.forceReconnect(deviceAddress, requiresBond, caller)
                 return
             }
 
