@@ -1082,13 +1082,21 @@ def _get_signed_url(blob, minutes):
     if cached := get_cached_signed_url(blob.name):
         return cached
 
-    # When using Workload Identity (no private key), we must pass the service
-    # account email and refreshed credentials so the GCS library calls the
-    # IAM Credentials signBlob API instead of signing locally.
-    sa_email = os.environ.get('GCP_SERVICE_ACCOUNT_EMAIL')
-    if sa_email and not isinstance(storage_client._credentials, service_account.Credentials):
-        creds = storage_client._credentials
-        creds.refresh(google.auth.transport.requests.Request())
+    creds = storage_client._credentials
+    needs_remote_signing = not isinstance(creds, service_account.Credentials)
+
+    # Keyless Google credentials, including Workload Identity, must pass the
+    # service account email and refreshed token so GCS signs via IAM
+    # Credentials instead of a local private key.
+    if needs_remote_signing:
+        sa_email = os.environ.get('GCS_SIGNER_SERVICE_ACCOUNT_EMAIL')
+        if not sa_email:
+            raise EnvironmentError(
+                "GCS_SIGNER_SERVICE_ACCOUNT_EMAIL must be set when using Workload Identity"
+            )
+        if not creds.valid:
+            creds.refresh(google.auth.transport.requests.Request())
+
         signed_url = blob.generate_signed_url(
             version="v4",
             expiration=datetime.timedelta(minutes=minutes),
@@ -1097,11 +1105,13 @@ def _get_signed_url(blob, minutes):
             access_token=creds.token,
         )
     else:
+        # Private-key service account credentials sign the URL locally.
         signed_url = blob.generate_signed_url(
             version="v4",
             expiration=datetime.timedelta(minutes=minutes),
             method="GET",
         )
+
     cache_signed_url(blob.name, signed_url, minutes * 60)
     return signed_url
 
