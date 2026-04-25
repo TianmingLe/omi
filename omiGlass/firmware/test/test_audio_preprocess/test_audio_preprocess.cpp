@@ -3,7 +3,7 @@
 #include <math.h>
 #include <stdint.h>
 
-#include "audio_preprocess.h"
+#include "audio/audio_preprocess.h"
 
 static void test_downsample_48k_to_16k_sample_count()
 {

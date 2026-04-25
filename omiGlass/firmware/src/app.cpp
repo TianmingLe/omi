@@ -7,7 +7,7 @@
 #include <BLEUtils.h>
 
 #include "config.h" // Use config.h for all configurations
-#include "audio_preprocess.h"
+#include "audio/audio_preprocess.h"
 #include "esp_camera.h"
 #include "esp_sleep.h"
 #include "mic.h"
