@@ -20,6 +20,22 @@ static void test_feature_packet_header_encode_decode()
     TEST_ASSERT_EQUAL_UINT16(0, h2.seq);
 }
 
+static void test_feature_packet_endianness()
+{
+    uint8_t packet[BLE_FEATURE_PACKET_V1_SIZE] = {0};
+    int8_t feat[BLE_FEATURE_VECTOR_SIZE] = {0};
+
+    const BleFeatureHeaderV1 h{.seq = 0x0201, .timestamp_ms = 0x08070605};
+    ble_feature_packet_v1_write(packet, h, feat);
+
+    TEST_ASSERT_EQUAL_UINT8(0x01, packet[0]);
+    TEST_ASSERT_EQUAL_UINT8(0x02, packet[1]);
+    TEST_ASSERT_EQUAL_UINT8(0x05, packet[2]);
+    TEST_ASSERT_EQUAL_UINT8(0x06, packet[3]);
+    TEST_ASSERT_EQUAL_UINT8(0x07, packet[4]);
+    TEST_ASSERT_EQUAL_UINT8(0x08, packet[5]);
+}
+
 static void test_feature_quant_payload_size()
 {
     TEST_ASSERT_EQUAL_INT(6, BLE_FEATURE_QUANT_V1_SIZE);
@@ -75,6 +91,7 @@ void setup()
 {
     UNITY_BEGIN();
     RUN_TEST(test_feature_packet_header_encode_decode);
+    RUN_TEST(test_feature_packet_endianness);
     RUN_TEST(test_feature_quant_payload_size);
     RUN_TEST(test_feature_extract_api_compiles);
     RUN_TEST(test_preprocess_range_black_white_random);

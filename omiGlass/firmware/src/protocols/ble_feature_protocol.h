@@ -26,9 +26,16 @@ inline void ble_feature_header_v1_write(uint8_t *dst, const BleFeatureHeaderV1 &
     dst[5] = (uint8_t) ((h.timestamp_ms >> 24) & 0xFF);
 }
 
+inline void ble_feature_packet_v1_write(uint8_t *dst, const BleFeatureHeaderV1 &h, const int8_t *feat_128)
+{
+    ble_feature_header_v1_write(dst, h);
+    for (int i = 0; i < BLE_FEATURE_VECTOR_SIZE; i++) {
+        dst[BLE_FEATURE_HEADER_V1_SIZE + i] = (uint8_t) feat_128[i];
+    }
+}
+
 inline void ble_feature_header_v1_read(const uint8_t *src, BleFeatureHeaderV1 *out)
 {
     out->seq = (uint16_t) (src[0] | (src[1] << 8));
     out->timestamp_ms = (uint32_t) (src[2] | (src[3] << 8) | (src[4] << 16) | (src[5] << 24));
 }
-

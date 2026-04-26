@@ -10,6 +10,7 @@
 #include "config.h" // Use config.h for all configurations
 #include "audio/audio_preprocess.h"
 #include "ble/ble_audio_stream.h"
+#include "ble/ble_feature_stream.h"
 #include "esp_camera.h"
 #include "esp_sleep.h"
 #include "gatt/gatt_mtu_phy.h"
@@ -82,6 +83,7 @@ BLECharacteristic *otaDataCharacteristic;
 // Audio state
 bool audioEnabled = true;
 volatile bool audioSubscribed = false;
+volatile bool featureSubscribed = false;
 
 // State
 bool connected = false;
@@ -441,6 +443,7 @@ class ServerHandler : public BLEServerCallbacks
     {
         connected = true;
         audioSubscribed = false;
+        featureSubscribed = false;
         lastActivity = millis(); // Register activity - prevents sleep
         Serial.println(">>> BLE Client connected.");
         // Send current battery level on connect
@@ -457,6 +460,7 @@ class ServerHandler : public BLEServerCallbacks
     {
         connected = false;
         audioSubscribed = false;
+        featureSubscribed = false;
         Serial.println("<<< BLE Client disconnected. Restarting advertising.");
         BLEDevice::startAdvertising();
     }
@@ -476,6 +480,21 @@ class AudioCCCDCallback : public BLEDescriptorCallbacks
             } else {
                 audioSubscribed = false;
                 Serial.println("Audio notifications disabled");
+            }
+        }
+    }
+};
+
+class FeatureCCCDCallback : public BLEDescriptorCallbacks
+{
+    void onWrite(BLEDescriptor *pDescriptor)
+    {
+        uint8_t *value = pDescriptor->getValue();
+        if (value && pDescriptor->getLength() >= 2) {
+            if (value[0] & 0x01) {
+                featureSubscribed = true;
+            } else {
+                featureSubscribed = false;
             }
         }
     }
@@ -649,7 +668,9 @@ void configure_ble()
         featureDataUUID, BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
     BLE2902 *featureCcc = new BLE2902();
     featureCcc->setNotifications(true);
+    featureCcc->setCallbacks(new FeatureCCCDCallback());
     featureDataCharacteristic->addDescriptor(featureCcc);
+    ble_feature_stream_init(featureDataCharacteristic);
 
     featureCodecCharacteristic = service->createCharacteristic(featureCodecUUID, BLECharacteristic::PROPERTY_READ);
     uint8_t featureCodecId = FEATURE_CODEC_ID;
@@ -954,6 +975,16 @@ void loop_app()
     // Send audio packets over BLE - PRIORITY over photo
     if (connected && audioSubscribed) {
         processAudioTx();
+    }
+
+    if (connected && featureSubscribed && !ble_audio_stream_is_congested()) {
+        static unsigned long lastFeatureTx = 0;
+        if (now - lastFeatureTx >= 200) {
+            static int8_t features[128] = {0};
+            const uint32_t capture_ts_ms = (uint32_t) now; // TODO: Replace with actual camera frame capture timestamp in Task 9
+            ble_feature_stream_send(features, capture_ts_ms);
+            lastFeatureTx = now;
+        }
     }
 
     // Check for power save mode (gentle optimization)
