@@ -146,7 +146,7 @@ typedef enum {
 // =============================================================================
 // OPUS CODEC CONFIGURATION
 // =============================================================================
-#define AUDIO_CODEC_ID 21              // Opus codec ID (matches Omi protocol)
+#define AUDIO_CODEC_ID 22              // Opus codec ID (V2 header: seq+timestamp+payload)
 #define OPUS_FRAME_SAMPLES 320         // 20ms frame @ 16kHz
 #define OPUS_OUTPUT_MAX_BYTES 160      // Max encoded frame size
 #define OPUS_BITRATE 64000             // 64kbps

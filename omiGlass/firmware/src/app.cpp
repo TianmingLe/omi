@@ -9,6 +9,7 @@
 
 #include "config.h" // Use config.h for all configurations
 #include "audio/audio_preprocess.h"
+#include "ble/ble_audio_stream.h"
 #include "esp_camera.h"
 #include "esp_sleep.h"
 #include "gatt/gatt_mtu_phy.h"
@@ -74,7 +75,6 @@ BLECharacteristic *otaDataCharacteristic;
 // Audio state
 bool audioEnabled = true;
 volatile bool audioSubscribed = false;
-uint16_t audioPacketIndex = 0;
 
 // State
 bool connected = false;
@@ -83,11 +83,11 @@ int captureInterval = 0; // Interval in ms
 unsigned long lastCaptureTime = 0;
 
 // Audio ring buffer for encoded packets
-#define AUDIO_TX_BUFFER_SIZE (AUDIO_TX_RING_BUFFER_SIZE * (OPUS_OUTPUT_MAX_BYTES + 2))
+#define AUDIO_TX_PACKET_META_SIZE 6
+#define AUDIO_TX_BUFFER_SIZE (AUDIO_TX_RING_BUFFER_SIZE * (OPUS_OUTPUT_MAX_BYTES + AUDIO_TX_PACKET_META_SIZE))
 static uint8_t audio_tx_buffer[AUDIO_TX_BUFFER_SIZE];
 static volatile size_t audio_tx_write_pos = 0;
 static volatile size_t audio_tx_read_pos = 0;
-static uint8_t audio_packet_buffer[OPUS_OUTPUT_MAX_BYTES + AUDIO_PACKET_HEADER_SIZE];
 
 size_t sent_photo_bytes = 0;
 size_t sent_photo_frames = 0;
@@ -115,8 +115,8 @@ void enableLightSleep();
 // Audio forward declarations
 void onMicData(int16_t *data, size_t samples);
 void onOpusEncoded(uint8_t *data, size_t len);
+void onOpusEncodedV2(uint8_t *data, size_t len, uint32_t capture_ts_ms);
 void processAudioTx();
-void broadcastAudioPacket(uint8_t *data, size_t len);
 
 // -------------------------------------------------------------------------
 // Button ISR
@@ -327,14 +327,15 @@ void shutdownDevice()
 // -------------------------------------------------------------------------
 void onMicData(int16_t *data, size_t samples)
 {
+    const uint32_t capture_ts_ms = millis();
 #if MIC_CAPTURE_SAMPLE_RATE == OPUS_SAMPLE_RATE
-    opus_receive_pcm(data, samples);
+    opus_receive_pcm_with_timestamp(data, samples, capture_ts_ms);
 #else
     int16_t out_buf[MIC_BUFFER_SAMPLES / 3];
     size_t out_samples = 0;
     if (audio_preprocess_process(data, samples, batteryPercentage, out_buf, sizeof(out_buf) / sizeof(out_buf[0]), &out_samples)) {
         if (out_samples > 0) {
-            opus_receive_pcm(out_buf, out_samples);
+            opus_receive_pcm_with_timestamp(out_buf, out_samples, capture_ts_ms);
         }
     }
 #endif
@@ -342,13 +343,17 @@ void onMicData(int16_t *data, size_t samples)
 
 void onOpusEncoded(uint8_t *data, size_t len)
 {
+    onOpusEncodedV2(data, len, 0);
+}
+
+void onOpusEncodedV2(uint8_t *data, size_t len, uint32_t capture_ts_ms)
+{
     // Store encoded data in TX ring buffer
     if (len > OPUS_OUTPUT_MAX_BYTES) {
         return;
     }
 
-    // Write length (2 bytes) + data
-    size_t packet_size = len + 2;
+    size_t packet_size = len + AUDIO_TX_PACKET_META_SIZE;
     size_t next_write = (audio_tx_write_pos + packet_size) % AUDIO_TX_BUFFER_SIZE;
 
     // Check for buffer overflow
@@ -362,32 +367,17 @@ void onOpusEncoded(uint8_t *data, size_t len)
     // Write length
     audio_tx_buffer[audio_tx_write_pos] = len & 0xFF;
     audio_tx_buffer[(audio_tx_write_pos + 1) % AUDIO_TX_BUFFER_SIZE] = (len >> 8) & 0xFF;
+    audio_tx_buffer[(audio_tx_write_pos + 2) % AUDIO_TX_BUFFER_SIZE] = (uint8_t) (capture_ts_ms & 0xFF);
+    audio_tx_buffer[(audio_tx_write_pos + 3) % AUDIO_TX_BUFFER_SIZE] = (uint8_t) ((capture_ts_ms >> 8) & 0xFF);
+    audio_tx_buffer[(audio_tx_write_pos + 4) % AUDIO_TX_BUFFER_SIZE] = (uint8_t) ((capture_ts_ms >> 16) & 0xFF);
+    audio_tx_buffer[(audio_tx_write_pos + 5) % AUDIO_TX_BUFFER_SIZE] = (uint8_t) ((capture_ts_ms >> 24) & 0xFF);
 
     // Write data
     for (size_t i = 0; i < len; i++) {
-        audio_tx_buffer[(audio_tx_write_pos + 2 + i) % AUDIO_TX_BUFFER_SIZE] = data[i];
+        audio_tx_buffer[(audio_tx_write_pos + AUDIO_TX_PACKET_META_SIZE + i) % AUDIO_TX_BUFFER_SIZE] = data[i];
     }
 
     audio_tx_write_pos = next_write;
-}
-
-void broadcastAudioPacket(uint8_t *data, size_t len)
-{
-    if (!connected || !audioSubscribed || audioDataCharacteristic == nullptr) {
-        return;
-    }
-
-    // Build packet: 2 bytes index + 1 byte sub-index + data
-    audio_packet_buffer[0] = audioPacketIndex & 0xFF;
-    audio_packet_buffer[1] = (audioPacketIndex >> 8) & 0xFF;
-    audio_packet_buffer[2] = 0; // Sub-index (for fragmentation if needed)
-
-    memcpy(audio_packet_buffer + AUDIO_PACKET_HEADER_SIZE, data, len);
-
-    audioDataCharacteristic->setValue(audio_packet_buffer, len + AUDIO_PACKET_HEADER_SIZE);
-    audioDataCharacteristic->notify();
-
-    audioPacketIndex++;
 }
 
 void processAudioTx()
@@ -408,21 +398,27 @@ void processAudioTx()
 
         if (len == 0 || len > OPUS_OUTPUT_MAX_BYTES) {
             // Invalid packet, skip
-            audio_tx_read_pos = (audio_tx_read_pos + 2) % AUDIO_TX_BUFFER_SIZE;
+            audio_tx_read_pos = (audio_tx_read_pos + AUDIO_TX_PACKET_META_SIZE) % AUDIO_TX_BUFFER_SIZE;
             continue;
         }
+
+        uint32_t capture_ts_ms = 0;
+        capture_ts_ms |= (uint32_t) audio_tx_buffer[(audio_tx_read_pos + 2) % AUDIO_TX_BUFFER_SIZE];
+        capture_ts_ms |= (uint32_t) audio_tx_buffer[(audio_tx_read_pos + 3) % AUDIO_TX_BUFFER_SIZE] << 8;
+        capture_ts_ms |= (uint32_t) audio_tx_buffer[(audio_tx_read_pos + 4) % AUDIO_TX_BUFFER_SIZE] << 16;
+        capture_ts_ms |= (uint32_t) audio_tx_buffer[(audio_tx_read_pos + 5) % AUDIO_TX_BUFFER_SIZE] << 24;
 
         // Read data
         static uint8_t temp_data[OPUS_OUTPUT_MAX_BYTES];
         for (size_t i = 0; i < len; i++) {
-            temp_data[i] = audio_tx_buffer[(audio_tx_read_pos + 2 + i) % AUDIO_TX_BUFFER_SIZE];
+            temp_data[i] = audio_tx_buffer[(audio_tx_read_pos + AUDIO_TX_PACKET_META_SIZE + i) % AUDIO_TX_BUFFER_SIZE];
         }
 
         // Update read position
-        audio_tx_read_pos = (audio_tx_read_pos + 2 + len) % AUDIO_TX_BUFFER_SIZE;
+        audio_tx_read_pos = (audio_tx_read_pos + AUDIO_TX_PACKET_META_SIZE + len) % AUDIO_TX_BUFFER_SIZE;
 
         // Send packet
-        broadcastAudioPacket(temp_data, len);
+        ble_audio_stream_send(temp_data, len, capture_ts_ms);
 
         // Small delay to prevent BLE congestion
         delay(1);
@@ -635,6 +631,7 @@ void configure_ble()
     audioCcc->setCallbacks(new AudioCCCDCallback());
     audioDataCharacteristic->addDescriptor(audioCcc);
     audioDataCharacteristic->setCallbacks(new AudioDataCallback());
+    ble_audio_stream_init(audioDataCharacteristic);
 
     // Audio Codec characteristic (tells app which codec we're using)
     audioCodecCharacteristic = service->createCharacteristic(audioCodecUUID, BLECharacteristic::PROPERTY_READ);
@@ -883,7 +880,7 @@ void setup_app()
     // Initialize audio subsystem
     Serial.println("Initializing audio subsystem...");
     if (opus_encoder_init()) {
-        opus_set_callback(onOpusEncoded);
+        opus_set_callback_v2(onOpusEncodedV2);
 
         if (mic_start()) {
             mic_set_callback(onMicData);
