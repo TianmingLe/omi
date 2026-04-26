@@ -147,6 +147,7 @@ typedef enum {
 // OPUS CODEC CONFIGURATION
 // =============================================================================
 #define AUDIO_CODEC_ID 22              // Opus codec ID (V2 header: seq+timestamp+payload)
+#define FEATURE_CODEC_ID 33
 #define OPUS_FRAME_SAMPLES 320         // 20ms frame @ 16kHz
 #define OPUS_OUTPUT_MAX_BYTES 160      // Max encoded frame size
 #define OPUS_BITRATE 64000             // 64kbps
@@ -165,6 +166,9 @@ typedef enum {
 #define AUDIO_CODEC_UUID "19B10002-E8F2-537E-4F6C-D104768A1214"
 #define PHOTO_DATA_UUID "19B10005-E8F2-537E-4F6C-D104768A1214"
 #define PHOTO_CONTROL_UUID "19B10006-E8F2-537E-4F6C-D104768A1214"
+#define FEATURE_DATA_UUID "19B10007-E8F2-537E-4F6C-D104768A1214"
+#define FEATURE_CODEC_UUID "19B10008-E8F2-537E-4F6C-D104768A1214"
+#define FEATURE_QUANT_UUID "19B10009-E8F2-537E-4F6C-D104768A1214"
 
 // Battery Service UUID - Cast to uint16_t for BLE compatibility
 #define BATTERY_SERVICE_UUID (uint16_t) 0x180F

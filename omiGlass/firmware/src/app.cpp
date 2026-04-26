@@ -10,9 +10,11 @@
 #include "config.h" // Use config.h for all configurations
 #include "audio/audio_preprocess.h"
 #include "ble/ble_audio_stream.h"
+#include "ble/ble_feature_stream.h"
 #include "esp_camera.h"
 #include "esp_sleep.h"
 #include "gatt/gatt_mtu_phy.h"
+#include "sensor.h"
 #include "mic.h"
 #include "opus_encoder.h"
 #include "ota.h"
@@ -57,6 +59,9 @@ static BLEUUID photoDataUUID(PHOTO_DATA_UUID);
 static BLEUUID photoControlUUID(PHOTO_CONTROL_UUID);
 static BLEUUID audioDataUUID(AUDIO_DATA_UUID);
 static BLEUUID audioCodecUUID(AUDIO_CODEC_UUID);
+static BLEUUID featureDataUUID(FEATURE_DATA_UUID);
+static BLEUUID featureCodecUUID(FEATURE_CODEC_UUID);
+static BLEUUID featureQuantUUID(FEATURE_QUANT_UUID);
 
 // OTA Service UUIDs
 static BLEUUID otaServiceUUID(OTA_SERVICE_UUID);
@@ -69,12 +74,16 @@ BLECharacteristic *photoControlCharacteristic;
 BLECharacteristic *batteryLevelCharacteristic;
 BLECharacteristic *audioDataCharacteristic;
 BLECharacteristic *audioCodecCharacteristic;
+BLECharacteristic *featureDataCharacteristic;
+BLECharacteristic *featureCodecCharacteristic;
+BLECharacteristic *featureQuantCharacteristic;
 BLECharacteristic *otaControlCharacteristic;
 BLECharacteristic *otaDataCharacteristic;
 
 // Audio state
 bool audioEnabled = true;
 volatile bool audioSubscribed = false;
+volatile bool featureSubscribed = false;
 
 // State
 bool connected = false;
@@ -434,6 +443,7 @@ class ServerHandler : public BLEServerCallbacks
     {
         connected = true;
         audioSubscribed = false;
+        featureSubscribed = false;
         lastActivity = millis(); // Register activity - prevents sleep
         Serial.println(">>> BLE Client connected.");
         // Send current battery level on connect
@@ -450,6 +460,7 @@ class ServerHandler : public BLEServerCallbacks
     {
         connected = false;
         audioSubscribed = false;
+        featureSubscribed = false;
         Serial.println("<<< BLE Client disconnected. Restarting advertising.");
         BLEDevice::startAdvertising();
     }
@@ -469,6 +480,21 @@ class AudioCCCDCallback : public BLEDescriptorCallbacks
             } else {
                 audioSubscribed = false;
                 Serial.println("Audio notifications disabled");
+            }
+        }
+    }
+};
+
+class FeatureCCCDCallback : public BLEDescriptorCallbacks
+{
+    void onWrite(BLEDescriptor *pDescriptor)
+    {
+        uint8_t *value = pDescriptor->getValue();
+        if (value && pDescriptor->getLength() >= 2) {
+            if (value[0] & 0x01) {
+                featureSubscribed = true;
+            } else {
+                featureSubscribed = false;
             }
         }
     }
@@ -637,6 +663,28 @@ void configure_ble()
     audioCodecCharacteristic = service->createCharacteristic(audioCodecUUID, BLECharacteristic::PROPERTY_READ);
     uint8_t codecId = opus_get_codec_id();
     audioCodecCharacteristic->setValue(&codecId, 1);
+
+    featureDataCharacteristic = service->createCharacteristic(
+        featureDataUUID, BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
+    BLE2902 *featureCcc = new BLE2902();
+    featureCcc->setNotifications(true);
+    featureCcc->setCallbacks(new FeatureCCCDCallback());
+    featureDataCharacteristic->addDescriptor(featureCcc);
+    ble_feature_stream_init(featureDataCharacteristic);
+
+    featureCodecCharacteristic = service->createCharacteristic(featureCodecUUID, BLECharacteristic::PROPERTY_READ);
+    uint8_t featureCodecId = FEATURE_CODEC_ID;
+    featureCodecCharacteristic->setValue(&featureCodecId, 1);
+
+    featureQuantCharacteristic = service->createCharacteristic(featureQuantUUID, BLECharacteristic::PROPERTY_READ);
+    float featureScale = 0.1f;
+    int8_t featureZeroPoint = 0;
+    uint8_t featureModelId = 1;
+    uint8_t featureQuant[6];
+    memcpy(&featureQuant[0], &featureScale, 4);
+    featureQuant[4] = (uint8_t) featureZeroPoint;
+    featureQuant[5] = featureModelId;
+    featureQuantCharacteristic->setValue(featureQuant, sizeof(featureQuant));
 
     // Photo Data characteristic
     photoDataCharacteristic = service->createCharacteristic(
@@ -813,6 +861,15 @@ void configure_camera()
     config.fb_location = CAMERA_FB_IN_PSRAM;
     config.grab_mode = CAMERA_GRAB_LATEST;
 
+    ESP_LOGI(
+        "VISION",
+        "VISION_BASELINE: resolution=%dx%d, format=%d, fps=%d",
+        (int) resolution[config.frame_size].width,
+        (int) resolution[config.frame_size].height,
+        (int) config.pixel_format,
+        0
+    );
+
     esp_err_t err = esp_camera_init(&config);
     if (err != ESP_OK) {
         Serial.printf("Camera init failed with error 0x%x\n", err);
@@ -918,6 +975,16 @@ void loop_app()
     // Send audio packets over BLE - PRIORITY over photo
     if (connected && audioSubscribed) {
         processAudioTx();
+    }
+
+    if (connected && featureSubscribed && !ble_audio_stream_is_congested()) {
+        static unsigned long lastFeatureTx = 0;
+        if (now - lastFeatureTx >= 200) {
+            static int8_t features[128] = {0};
+            const uint32_t capture_ts_ms = (uint32_t) now; // TODO: Replace with actual camera frame capture timestamp in Task 9
+            ble_feature_stream_send(features, capture_ts_ms);
+            lastFeatureTx = now;
+        }
     }
 
     // Check for power save mode (gentle optimization)
