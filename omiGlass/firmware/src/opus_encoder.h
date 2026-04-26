@@ -6,6 +6,7 @@
 
 // Callback type for encoded audio data
 typedef void (*opus_encoded_handler)(uint8_t *data, size_t len);
+typedef void (*opus_encoded_handler_v2)(uint8_t *data, size_t len, uint32_t capture_ts_ms);
 
 /**
  * @brief Initialize the Opus encoder
@@ -26,6 +27,7 @@ int opus_encode_frame(int16_t *pcm_data, size_t samples);
  * @param callback Function to call when encoded data is ready
  */
 void opus_set_callback(opus_encoded_handler callback);
+void opus_set_callback_v2(opus_encoded_handler_v2 callback);
 
 /**
  * @brief Process queued PCM data (call from main loop)
@@ -39,11 +41,18 @@ void opus_process();
  * @return 0 on success
  */
 int opus_receive_pcm(int16_t *data, size_t samples);
+int opus_receive_pcm_with_timestamp(int16_t *data, size_t samples, uint32_t capture_ts_ms);
 
 /**
  * @brief Get the codec ID
  * @return Codec ID (20 = Opus)
  */
 uint8_t opus_get_codec_id();
+
+int opus_get_bitrate();
+int opus_get_default_complexity();
+int opus_get_frame_samples();
+int opus_get_output_max_bytes();
+bool opus_set_complexity(int complexity);
 
 #endif // OPUS_ENCODER_H

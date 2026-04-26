@@ -146,12 +146,12 @@ typedef enum {
 // =============================================================================
 // OPUS CODEC CONFIGURATION
 // =============================================================================
-#define AUDIO_CODEC_ID 21              // Opus codec ID (matches Omi protocol)
+#define AUDIO_CODEC_ID 22              // Opus codec ID (V2 header: seq+timestamp+payload)
 #define OPUS_FRAME_SAMPLES 320         // 20ms frame @ 16kHz
 #define OPUS_OUTPUT_MAX_BYTES 160      // Max encoded frame size
-#define OPUS_BITRATE 32000             // 32kbps
-#define OPUS_COMPLEXITY 3              // Encoding complexity (1-10)
-#define OPUS_VBR 1                     // Variable bitrate enabled
+#define OPUS_BITRATE 64000             // 64kbps
+#define OPUS_COMPLEXITY 5              // Encoding complexity (1-10)
+#define OPUS_VBR 0                     // Use constant bitrate
 
 // Audio BLE packet configuration
 #define AUDIO_PACKET_HEADER_SIZE 3     // 2 bytes index + 1 byte sub-index

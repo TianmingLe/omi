@@ -8,11 +8,22 @@
 // Opus encoder instance
 static OpusEncoder *encoder = nullptr;
 static opus_encoded_handler encoded_callback = nullptr;
+static opus_encoded_handler_v2 encoded_callback_v2 = nullptr;
+static int s_current_complexity = OPUS_COMPLEXITY;
 
 // Ring buffer for PCM data - allocated in PSRAM
 static int16_t *pcm_ring_buffer = nullptr;
 static volatile size_t ring_write_pos = 0;
 static volatile size_t ring_read_pos = 0;
+
+static constexpr int TS_SEG_RING_SIZE = 64;
+struct TsSeg {
+    uint32_t ts_ms;
+    uint16_t samples;
+};
+static TsSeg ts_seg_ring[TS_SEG_RING_SIZE];
+static uint8_t ts_seg_w = 0;
+static uint8_t ts_seg_r = 0;
 
 // Output buffer - allocated in PSRAM
 static uint8_t *opus_output_buffer = nullptr;
@@ -76,7 +87,8 @@ bool opus_encoder_init()
     opus_encoder_ctl(encoder, OPUS_SET_LSB_DEPTH(16));
     opus_encoder_ctl(encoder, OPUS_SET_DTX(0));
     opus_encoder_ctl(encoder, OPUS_SET_INBAND_FEC(0));
-    opus_encoder_ctl(encoder, OPUS_SET_PACKET_LOSS_PERC(0));
+    opus_encoder_ctl(encoder, OPUS_SET_PACKET_LOSS_PERC(1));
+    s_current_complexity = OPUS_COMPLEXITY;
 
     // Reset ring buffer
     ring_write_pos = 0;
@@ -95,6 +107,11 @@ void opus_set_callback(opus_encoded_handler callback)
     encoded_callback = callback;
 }
 
+void opus_set_callback_v2(opus_encoded_handler_v2 callback)
+{
+    encoded_callback_v2 = callback;
+}
+
 int opus_receive_pcm(int16_t *data, size_t samples)
 {
     if (pcm_ring_buffer == nullptr) {
@@ -110,6 +127,56 @@ int opus_receive_pcm(int16_t *data, size_t samples)
         ring_write_pos = next_write;
     }
     return 0;
+}
+
+static void ts_seg_push(uint32_t ts_ms, uint16_t samples)
+{
+    uint8_t next_w = (uint8_t) ((ts_seg_w + 1) % TS_SEG_RING_SIZE);
+    if (next_w == ts_seg_r) {
+        ts_seg_r = (uint8_t) ((ts_seg_r + 1) % TS_SEG_RING_SIZE);
+    }
+    ts_seg_ring[ts_seg_w] = TsSeg{.ts_ms = ts_ms, .samples = samples};
+    ts_seg_w = next_w;
+}
+
+int opus_receive_pcm_with_timestamp(int16_t *data, size_t samples, uint32_t capture_ts_ms)
+{
+    if (samples == 0) {
+        return 0;
+    }
+    const int rc = opus_receive_pcm(data, samples);
+    size_t remaining = samples;
+    while (remaining > 0) {
+        const uint16_t chunk = (remaining > 65535) ? 65535 : (uint16_t) remaining;
+        ts_seg_push(capture_ts_ms, chunk);
+        remaining -= chunk;
+    }
+    return rc;
+}
+
+static uint32_t ts_seg_consume(size_t samples_to_consume)
+{
+    if (ts_seg_r == ts_seg_w) {
+        return 0;
+    }
+    uint32_t first_ts = ts_seg_ring[ts_seg_r].ts_ms;
+    size_t remaining = samples_to_consume;
+
+    while (remaining > 0 && ts_seg_r != ts_seg_w) {
+        TsSeg &seg = ts_seg_ring[ts_seg_r];
+        if (seg.samples <= remaining) {
+            remaining -= seg.samples;
+            ts_seg_r = (uint8_t) ((ts_seg_r + 1) % TS_SEG_RING_SIZE);
+            continue;
+        }
+        const uint16_t consumed = (uint16_t) remaining;
+        const uint32_t delta_ms = (uint32_t) (((uint64_t) consumed * 1000ULL) / (uint64_t) OPUS_SAMPLE_RATE);
+        seg.ts_ms += delta_ms;
+        seg.samples = (uint16_t) (seg.samples - consumed);
+        remaining = 0;
+    }
+
+    return first_ts;
 }
 
 static size_t ring_buffer_available()
@@ -151,6 +218,7 @@ void opus_process()
 
     // Check if we have enough samples for a frame
     while (ring_buffer_available() >= OPUS_FRAME_SAMPLES) {
+        const uint32_t capture_ts_ms = ts_seg_consume(OPUS_FRAME_SAMPLES);
         // Read samples from ring buffer
         for (size_t i = 0; i < OPUS_FRAME_SAMPLES; i++) {
             opus_input_buffer[i] = pcm_ring_buffer[ring_read_pos];
@@ -160,7 +228,9 @@ void opus_process()
         // Encode frame
         int encoded_bytes = opus_encode_frame(opus_input_buffer, OPUS_FRAME_SAMPLES);
 
-        if (encoded_bytes > 0 && encoded_callback != nullptr) {
+        if (encoded_bytes > 0 && encoded_callback_v2 != nullptr) {
+            encoded_callback_v2(opus_output_buffer, encoded_bytes, capture_ts_ms);
+        } else if (encoded_bytes > 0 && encoded_callback != nullptr) {
             encoded_callback(opus_output_buffer, encoded_bytes);
         }
     }
@@ -171,4 +241,40 @@ uint8_t opus_get_codec_id()
     // Codec ID 20 = Opus (matching Omi protocol)
     // Actually Omi uses CODEC_ID 21 for Opus
     return AUDIO_CODEC_ID;
+}
+
+int opus_get_bitrate()
+{
+    return OPUS_BITRATE;
+}
+
+int opus_get_default_complexity()
+{
+    return OPUS_COMPLEXITY;
+}
+
+int opus_get_frame_samples()
+{
+    return OPUS_FRAME_SAMPLES;
+}
+
+int opus_get_output_max_bytes()
+{
+    return OPUS_OUTPUT_MAX_BYTES;
+}
+
+bool opus_set_complexity(int complexity)
+{
+    if (encoder == nullptr) {
+        return false;
+    }
+    if (complexity < 1 || complexity > 10) {
+        return false;
+    }
+    const int rc = opus_encoder_ctl(encoder, OPUS_SET_COMPLEXITY(complexity));
+    if (rc != OPUS_OK) {
+        return false;
+    }
+    s_current_complexity = complexity;
+    return true;
 }

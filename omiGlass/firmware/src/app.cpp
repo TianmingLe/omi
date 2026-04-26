@@ -5,11 +5,14 @@
 #include <BLEDevice.h>
 #include <BLEScan.h>
 #include <BLEUtils.h>
+#include <esp_log.h>
 
 #include "config.h" // Use config.h for all configurations
 #include "audio/audio_preprocess.h"
+#include "ble/ble_audio_stream.h"
 #include "esp_camera.h"
 #include "esp_sleep.h"
+#include "gatt/gatt_mtu_phy.h"
 #include "mic.h"
 #include "opus_encoder.h"
 #include "ota.h"
@@ -18,6 +21,7 @@
 float batteryVoltage = 0.0f;
 int batteryPercentage = 0;
 unsigned long lastBatteryCheck = 0;
+static bool s_opus_low_battery = false;
 
 // Device power state
 bool deviceActive = true;
@@ -71,7 +75,6 @@ BLECharacteristic *otaDataCharacteristic;
 // Audio state
 bool audioEnabled = true;
 volatile bool audioSubscribed = false;
-uint16_t audioPacketIndex = 0;
 
 // State
 bool connected = false;
@@ -80,11 +83,11 @@ int captureInterval = 0; // Interval in ms
 unsigned long lastCaptureTime = 0;
 
 // Audio ring buffer for encoded packets
-#define AUDIO_TX_BUFFER_SIZE (AUDIO_TX_RING_BUFFER_SIZE * (OPUS_OUTPUT_MAX_BYTES + 2))
+#define AUDIO_TX_PACKET_META_SIZE 6
+#define AUDIO_TX_BUFFER_SIZE (AUDIO_TX_RING_BUFFER_SIZE * (OPUS_OUTPUT_MAX_BYTES + AUDIO_TX_PACKET_META_SIZE))
 static uint8_t audio_tx_buffer[AUDIO_TX_BUFFER_SIZE];
 static volatile size_t audio_tx_write_pos = 0;
 static volatile size_t audio_tx_read_pos = 0;
-static uint8_t audio_packet_buffer[OPUS_OUTPUT_MAX_BYTES + AUDIO_PACKET_HEADER_SIZE];
 
 size_t sent_photo_bytes = 0;
 size_t sent_photo_frames = 0;
@@ -112,8 +115,8 @@ void enableLightSleep();
 // Audio forward declarations
 void onMicData(int16_t *data, size_t samples);
 void onOpusEncoded(uint8_t *data, size_t len);
+void onOpusEncodedV2(uint8_t *data, size_t len, uint32_t capture_ts_ms);
 void processAudioTx();
-void broadcastAudioPacket(uint8_t *data, size_t len);
 
 // -------------------------------------------------------------------------
 // Button ISR
@@ -324,14 +327,15 @@ void shutdownDevice()
 // -------------------------------------------------------------------------
 void onMicData(int16_t *data, size_t samples)
 {
+    const uint32_t capture_ts_ms = millis();
 #if MIC_CAPTURE_SAMPLE_RATE == OPUS_SAMPLE_RATE
-    opus_receive_pcm(data, samples);
+    opus_receive_pcm_with_timestamp(data, samples, capture_ts_ms);
 #else
     int16_t out_buf[MIC_BUFFER_SAMPLES / 3];
     size_t out_samples = 0;
     if (audio_preprocess_process(data, samples, batteryPercentage, out_buf, sizeof(out_buf) / sizeof(out_buf[0]), &out_samples)) {
         if (out_samples > 0) {
-            opus_receive_pcm(out_buf, out_samples);
+            opus_receive_pcm_with_timestamp(out_buf, out_samples, capture_ts_ms);
         }
     }
 #endif
@@ -339,13 +343,17 @@ void onMicData(int16_t *data, size_t samples)
 
 void onOpusEncoded(uint8_t *data, size_t len)
 {
+    onOpusEncodedV2(data, len, 0);
+}
+
+void onOpusEncodedV2(uint8_t *data, size_t len, uint32_t capture_ts_ms)
+{
     // Store encoded data in TX ring buffer
     if (len > OPUS_OUTPUT_MAX_BYTES) {
         return;
     }
 
-    // Write length (2 bytes) + data
-    size_t packet_size = len + 2;
+    size_t packet_size = len + AUDIO_TX_PACKET_META_SIZE;
     size_t next_write = (audio_tx_write_pos + packet_size) % AUDIO_TX_BUFFER_SIZE;
 
     // Check for buffer overflow
@@ -359,32 +367,17 @@ void onOpusEncoded(uint8_t *data, size_t len)
     // Write length
     audio_tx_buffer[audio_tx_write_pos] = len & 0xFF;
     audio_tx_buffer[(audio_tx_write_pos + 1) % AUDIO_TX_BUFFER_SIZE] = (len >> 8) & 0xFF;
+    audio_tx_buffer[(audio_tx_write_pos + 2) % AUDIO_TX_BUFFER_SIZE] = (uint8_t) (capture_ts_ms & 0xFF);
+    audio_tx_buffer[(audio_tx_write_pos + 3) % AUDIO_TX_BUFFER_SIZE] = (uint8_t) ((capture_ts_ms >> 8) & 0xFF);
+    audio_tx_buffer[(audio_tx_write_pos + 4) % AUDIO_TX_BUFFER_SIZE] = (uint8_t) ((capture_ts_ms >> 16) & 0xFF);
+    audio_tx_buffer[(audio_tx_write_pos + 5) % AUDIO_TX_BUFFER_SIZE] = (uint8_t) ((capture_ts_ms >> 24) & 0xFF);
 
     // Write data
     for (size_t i = 0; i < len; i++) {
-        audio_tx_buffer[(audio_tx_write_pos + 2 + i) % AUDIO_TX_BUFFER_SIZE] = data[i];
+        audio_tx_buffer[(audio_tx_write_pos + AUDIO_TX_PACKET_META_SIZE + i) % AUDIO_TX_BUFFER_SIZE] = data[i];
     }
 
     audio_tx_write_pos = next_write;
-}
-
-void broadcastAudioPacket(uint8_t *data, size_t len)
-{
-    if (!connected || !audioSubscribed || audioDataCharacteristic == nullptr) {
-        return;
-    }
-
-    // Build packet: 2 bytes index + 1 byte sub-index + data
-    audio_packet_buffer[0] = audioPacketIndex & 0xFF;
-    audio_packet_buffer[1] = (audioPacketIndex >> 8) & 0xFF;
-    audio_packet_buffer[2] = 0; // Sub-index (for fragmentation if needed)
-
-    memcpy(audio_packet_buffer + AUDIO_PACKET_HEADER_SIZE, data, len);
-
-    audioDataCharacteristic->setValue(audio_packet_buffer, len + AUDIO_PACKET_HEADER_SIZE);
-    audioDataCharacteristic->notify();
-
-    audioPacketIndex++;
 }
 
 void processAudioTx()
@@ -405,21 +398,27 @@ void processAudioTx()
 
         if (len == 0 || len > OPUS_OUTPUT_MAX_BYTES) {
             // Invalid packet, skip
-            audio_tx_read_pos = (audio_tx_read_pos + 2) % AUDIO_TX_BUFFER_SIZE;
+            audio_tx_read_pos = (audio_tx_read_pos + AUDIO_TX_PACKET_META_SIZE) % AUDIO_TX_BUFFER_SIZE;
             continue;
         }
+
+        uint32_t capture_ts_ms = 0;
+        capture_ts_ms |= (uint32_t) audio_tx_buffer[(audio_tx_read_pos + 2) % AUDIO_TX_BUFFER_SIZE];
+        capture_ts_ms |= (uint32_t) audio_tx_buffer[(audio_tx_read_pos + 3) % AUDIO_TX_BUFFER_SIZE] << 8;
+        capture_ts_ms |= (uint32_t) audio_tx_buffer[(audio_tx_read_pos + 4) % AUDIO_TX_BUFFER_SIZE] << 16;
+        capture_ts_ms |= (uint32_t) audio_tx_buffer[(audio_tx_read_pos + 5) % AUDIO_TX_BUFFER_SIZE] << 24;
 
         // Read data
         static uint8_t temp_data[OPUS_OUTPUT_MAX_BYTES];
         for (size_t i = 0; i < len; i++) {
-            temp_data[i] = audio_tx_buffer[(audio_tx_read_pos + 2 + i) % AUDIO_TX_BUFFER_SIZE];
+            temp_data[i] = audio_tx_buffer[(audio_tx_read_pos + AUDIO_TX_PACKET_META_SIZE + i) % AUDIO_TX_BUFFER_SIZE];
         }
 
         // Update read position
-        audio_tx_read_pos = (audio_tx_read_pos + 2 + len) % AUDIO_TX_BUFFER_SIZE;
+        audio_tx_read_pos = (audio_tx_read_pos + AUDIO_TX_PACKET_META_SIZE + len) % AUDIO_TX_BUFFER_SIZE;
 
         // Send packet
-        broadcastAudioPacket(temp_data, len);
+        ble_audio_stream_send(temp_data, len, capture_ts_ms);
 
         // Small delay to prevent BLE congestion
         delay(1);
@@ -439,6 +438,13 @@ class ServerHandler : public BLEServerCallbacks
         Serial.println(">>> BLE Client connected.");
         // Send current battery level on connect
         updateBatteryService();
+        ESP_LOGI(
+            "BLE_AUDIO",
+            "BLE_AUDIO_BASELINE: mtu=%d, phy=%d, opus_bitrate=%d",
+            (int) BLEDevice::getMTU(),
+            gatt_mtu_phy_get_phy_mode_or_unknown(),
+            (int) OPUS_BITRATE
+        );
     }
     void onDisconnect(BLEServer *server) override
     {
@@ -589,6 +595,18 @@ void updateBatteryService()
             batteryLevelCharacteristic->notify();
         }
     }
+
+    if (batteryPercentage < 20 && !s_opus_low_battery) {
+        if (opus_set_complexity(3)) {
+            ESP_LOGI("BLE_AUDIO", "OPUS_COMPLEXITY downgraded: 5→3 (battery=%d%%)", batteryPercentage);
+            s_opus_low_battery = true;
+        }
+    } else if (batteryPercentage >= 25 && s_opus_low_battery) {
+        if (opus_set_complexity(5)) {
+            ESP_LOGI("BLE_AUDIO", "OPUS_COMPLEXITY upgraded: 3→5 (battery=%d%%)", batteryPercentage);
+            s_opus_low_battery = false;
+        }
+    }
 }
 
 // -------------------------------------------------------------------------
@@ -598,6 +616,7 @@ void configure_ble()
 {
     Serial.println("Initializing BLE...");
     BLEDevice::init(BLE_DEVICE_NAME);
+    gatt_mtu_phy_init();
     BLEServer *server = BLEDevice::createServer();
     server->setCallbacks(new ServerHandler());
 
@@ -612,6 +631,7 @@ void configure_ble()
     audioCcc->setCallbacks(new AudioCCCDCallback());
     audioDataCharacteristic->addDescriptor(audioCcc);
     audioDataCharacteristic->setCallbacks(new AudioDataCallback());
+    ble_audio_stream_init(audioDataCharacteristic);
 
     // Audio Codec characteristic (tells app which codec we're using)
     audioCodecCharacteristic = service->createCharacteristic(audioCodecUUID, BLECharacteristic::PROPERTY_READ);
@@ -860,7 +880,7 @@ void setup_app()
     // Initialize audio subsystem
     Serial.println("Initializing audio subsystem...");
     if (opus_encoder_init()) {
-        opus_set_callback(onOpusEncoded);
+        opus_set_callback_v2(onOpusEncodedV2);
 
         if (mic_start()) {
             mic_set_callback(onMicData);
@@ -945,6 +965,9 @@ void loop_app()
     // If uploading, send chunks over BLE (interleave with audio - max 2 chunks per loop)
     static int photo_chunks_this_loop = 0;
     if (photoDataUploading && fb && photo_chunks_this_loop < 2) {
+        if (ble_audio_stream_is_congested()) {
+            photo_chunks_this_loop = 0;
+        } else {
         // Yield to audio if audio buffer has data
         if (audioSubscribed && audio_tx_read_pos != audio_tx_write_pos) {
             photo_chunks_this_loop = 0; // Reset for next loop
@@ -962,6 +985,7 @@ void loop_app()
                 bytes_to_copy = (remaining > 199) ? 199 : remaining;
                 memcpy(&s_compressed_frame_2[3], &fb->buf[sent_photo_bytes], bytes_to_copy);
                 photoDataCharacteristic->setValue(s_compressed_frame_2, bytes_to_copy + 3);
+                ble_audio_stream_note_non_audio_tx(bytes_to_copy + 3);
             } else {
                 // Subsequent chunks
                 s_compressed_frame_2[0] = (uint8_t) (sent_photo_frames & 0xFF);
@@ -969,6 +993,7 @@ void loop_app()
                 bytes_to_copy = (remaining > 200) ? 200 : remaining;
                 memcpy(&s_compressed_frame_2[2], &fb->buf[sent_photo_bytes], bytes_to_copy);
                 photoDataCharacteristic->setValue(s_compressed_frame_2, bytes_to_copy + 2);
+                ble_audio_stream_note_non_audio_tx(bytes_to_copy + 2);
             }
             photoDataCharacteristic->notify();
 
@@ -989,6 +1014,7 @@ void loop_app()
             s_compressed_frame_2[0] = 0xFF;
             s_compressed_frame_2[1] = 0xFF;
             photoDataCharacteristic->setValue(s_compressed_frame_2, 2);
+            ble_audio_stream_note_non_audio_tx(2);
             photoDataCharacteristic->notify();
             Serial.println("Photo upload complete.");
 
@@ -998,6 +1024,7 @@ void loop_app()
             fb = nullptr;
             Serial.println("Camera frame buffer freed.");
             photo_chunks_this_loop = 0; // Reset counter
+        }
         }
     } else {
         photo_chunks_this_loop = 0; // Reset when not uploading
