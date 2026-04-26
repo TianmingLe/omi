@@ -965,6 +965,9 @@ void loop_app()
     // If uploading, send chunks over BLE (interleave with audio - max 2 chunks per loop)
     static int photo_chunks_this_loop = 0;
     if (photoDataUploading && fb && photo_chunks_this_loop < 2) {
+        if (ble_audio_stream_is_congested()) {
+            photo_chunks_this_loop = 0;
+        } else {
         // Yield to audio if audio buffer has data
         if (audioSubscribed && audio_tx_read_pos != audio_tx_write_pos) {
             photo_chunks_this_loop = 0; // Reset for next loop
@@ -982,6 +985,7 @@ void loop_app()
                 bytes_to_copy = (remaining > 199) ? 199 : remaining;
                 memcpy(&s_compressed_frame_2[3], &fb->buf[sent_photo_bytes], bytes_to_copy);
                 photoDataCharacteristic->setValue(s_compressed_frame_2, bytes_to_copy + 3);
+                ble_audio_stream_note_non_audio_tx(bytes_to_copy + 3);
             } else {
                 // Subsequent chunks
                 s_compressed_frame_2[0] = (uint8_t) (sent_photo_frames & 0xFF);
@@ -989,6 +993,7 @@ void loop_app()
                 bytes_to_copy = (remaining > 200) ? 200 : remaining;
                 memcpy(&s_compressed_frame_2[2], &fb->buf[sent_photo_bytes], bytes_to_copy);
                 photoDataCharacteristic->setValue(s_compressed_frame_2, bytes_to_copy + 2);
+                ble_audio_stream_note_non_audio_tx(bytes_to_copy + 2);
             }
             photoDataCharacteristic->notify();
 
@@ -1009,6 +1014,7 @@ void loop_app()
             s_compressed_frame_2[0] = 0xFF;
             s_compressed_frame_2[1] = 0xFF;
             photoDataCharacteristic->setValue(s_compressed_frame_2, 2);
+            ble_audio_stream_note_non_audio_tx(2);
             photoDataCharacteristic->notify();
             Serial.println("Photo upload complete.");
 
@@ -1018,6 +1024,7 @@ void loop_app()
             fb = nullptr;
             Serial.println("Camera frame buffer freed.");
             photo_chunks_this_loop = 0; // Reset counter
+        }
         }
     } else {
         photo_chunks_this_loop = 0; // Reset when not uploading
