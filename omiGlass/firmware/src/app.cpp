@@ -13,6 +13,7 @@
 #include "esp_camera.h"
 #include "esp_sleep.h"
 #include "gatt/gatt_mtu_phy.h"
+#include "sensor.h"
 #include "mic.h"
 #include "opus_encoder.h"
 #include "ota.h"
@@ -812,6 +813,15 @@ void configure_camera()
     config.jpeg_quality = CAMERA_JPEG_QUALITY;
     config.fb_location = CAMERA_FB_IN_PSRAM;
     config.grab_mode = CAMERA_GRAB_LATEST;
+
+    ESP_LOGI(
+        "VISION",
+        "VISION_BASELINE: resolution=%dx%d, format=%d, fps=%d",
+        (int) resolution[config.frame_size].width,
+        (int) resolution[config.frame_size].height,
+        (int) config.pixel_format,
+        0
+    );
 
     esp_err_t err = esp_camera_init(&config);
     if (err != ESP_OK) {
