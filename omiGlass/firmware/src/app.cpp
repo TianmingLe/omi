@@ -20,6 +20,7 @@
 float batteryVoltage = 0.0f;
 int batteryPercentage = 0;
 unsigned long lastBatteryCheck = 0;
+static bool s_opus_low_battery = false;
 
 // Device power state
 bool deviceActive = true;
@@ -596,6 +597,18 @@ void updateBatteryService()
 
         if (connected) {
             batteryLevelCharacteristic->notify();
+        }
+    }
+
+    if (batteryPercentage < 20 && !s_opus_low_battery) {
+        if (opus_set_complexity(3)) {
+            ESP_LOGI("BLE_AUDIO", "OPUS_COMPLEXITY downgraded: 5→3 (battery=%d%%)", batteryPercentage);
+            s_opus_low_battery = true;
+        }
+    } else if (batteryPercentage >= 25 && s_opus_low_battery) {
+        if (opus_set_complexity(5)) {
+            ESP_LOGI("BLE_AUDIO", "OPUS_COMPLEXITY upgraded: 3→5 (battery=%d%%)", batteryPercentage);
+            s_opus_low_battery = false;
         }
     }
 }

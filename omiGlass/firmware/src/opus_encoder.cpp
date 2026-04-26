@@ -8,6 +8,7 @@
 // Opus encoder instance
 static OpusEncoder *encoder = nullptr;
 static opus_encoded_handler encoded_callback = nullptr;
+static int s_current_complexity = OPUS_COMPLEXITY;
 
 // Ring buffer for PCM data - allocated in PSRAM
 static int16_t *pcm_ring_buffer = nullptr;
@@ -76,7 +77,8 @@ bool opus_encoder_init()
     opus_encoder_ctl(encoder, OPUS_SET_LSB_DEPTH(16));
     opus_encoder_ctl(encoder, OPUS_SET_DTX(0));
     opus_encoder_ctl(encoder, OPUS_SET_INBAND_FEC(0));
-    opus_encoder_ctl(encoder, OPUS_SET_PACKET_LOSS_PERC(0));
+    opus_encoder_ctl(encoder, OPUS_SET_PACKET_LOSS_PERC(1));
+    s_current_complexity = OPUS_COMPLEXITY;
 
     // Reset ring buffer
     ring_write_pos = 0;
@@ -171,4 +173,40 @@ uint8_t opus_get_codec_id()
     // Codec ID 20 = Opus (matching Omi protocol)
     // Actually Omi uses CODEC_ID 21 for Opus
     return AUDIO_CODEC_ID;
+}
+
+int opus_get_bitrate()
+{
+    return OPUS_BITRATE;
+}
+
+int opus_get_default_complexity()
+{
+    return OPUS_COMPLEXITY;
+}
+
+int opus_get_frame_samples()
+{
+    return OPUS_FRAME_SAMPLES;
+}
+
+int opus_get_output_max_bytes()
+{
+    return OPUS_OUTPUT_MAX_BYTES;
+}
+
+bool opus_set_complexity(int complexity)
+{
+    if (encoder == nullptr) {
+        return false;
+    }
+    if (complexity < 1 || complexity > 10) {
+        return false;
+    }
+    const int rc = opus_encoder_ctl(encoder, OPUS_SET_COMPLEXITY(complexity));
+    if (rc != OPUS_OK) {
+        return false;
+    }
+    s_current_complexity = complexity;
+    return true;
 }

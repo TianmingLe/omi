@@ -46,4 +46,10 @@ int opus_receive_pcm(int16_t *data, size_t samples);
  */
 uint8_t opus_get_codec_id();
 
+int opus_get_bitrate();
+int opus_get_default_complexity();
+int opus_get_frame_samples();
+int opus_get_output_max_bytes();
+bool opus_set_complexity(int complexity);
+
 #endif // OPUS_ENCODER_H
