@@ -58,6 +58,9 @@ static BLEUUID photoDataUUID(PHOTO_DATA_UUID);
 static BLEUUID photoControlUUID(PHOTO_CONTROL_UUID);
 static BLEUUID audioDataUUID(AUDIO_DATA_UUID);
 static BLEUUID audioCodecUUID(AUDIO_CODEC_UUID);
+static BLEUUID featureDataUUID(FEATURE_DATA_UUID);
+static BLEUUID featureCodecUUID(FEATURE_CODEC_UUID);
+static BLEUUID featureQuantUUID(FEATURE_QUANT_UUID);
 
 // OTA Service UUIDs
 static BLEUUID otaServiceUUID(OTA_SERVICE_UUID);
@@ -70,6 +73,9 @@ BLECharacteristic *photoControlCharacteristic;
 BLECharacteristic *batteryLevelCharacteristic;
 BLECharacteristic *audioDataCharacteristic;
 BLECharacteristic *audioCodecCharacteristic;
+BLECharacteristic *featureDataCharacteristic;
+BLECharacteristic *featureCodecCharacteristic;
+BLECharacteristic *featureQuantCharacteristic;
 BLECharacteristic *otaControlCharacteristic;
 BLECharacteristic *otaDataCharacteristic;
 
@@ -638,6 +644,26 @@ void configure_ble()
     audioCodecCharacteristic = service->createCharacteristic(audioCodecUUID, BLECharacteristic::PROPERTY_READ);
     uint8_t codecId = opus_get_codec_id();
     audioCodecCharacteristic->setValue(&codecId, 1);
+
+    featureDataCharacteristic = service->createCharacteristic(
+        featureDataUUID, BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
+    BLE2902 *featureCcc = new BLE2902();
+    featureCcc->setNotifications(true);
+    featureDataCharacteristic->addDescriptor(featureCcc);
+
+    featureCodecCharacteristic = service->createCharacteristic(featureCodecUUID, BLECharacteristic::PROPERTY_READ);
+    uint8_t featureCodecId = FEATURE_CODEC_ID;
+    featureCodecCharacteristic->setValue(&featureCodecId, 1);
+
+    featureQuantCharacteristic = service->createCharacteristic(featureQuantUUID, BLECharacteristic::PROPERTY_READ);
+    float featureScale = 0.1f;
+    int8_t featureZeroPoint = 0;
+    uint8_t featureModelId = 1;
+    uint8_t featureQuant[6];
+    memcpy(&featureQuant[0], &featureScale, 4);
+    featureQuant[4] = (uint8_t) featureZeroPoint;
+    featureQuant[5] = featureModelId;
+    featureQuantCharacteristic->setValue(featureQuant, sizeof(featureQuant));
 
     // Photo Data characteristic
     photoDataCharacteristic = service->createCharacteristic(
