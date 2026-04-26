@@ -1,7 +1,9 @@
 #include "feature_extract_tflm.h"
 
+#include <Arduino.h>
 #include <string.h>
 
+#include "esp_log.h"
 #include "tensorflow/lite/micro/micro_interpreter.h"
 #include "tensorflow/lite/micro/micro_op_resolver.h"
 #include "tensorflow/lite/micro/kernels/fully_connected.h"
@@ -74,7 +76,12 @@ bool feature_extract_tflm_run(const int8_t *input_96x96, int8_t *out_128, size_t
         memcpy(input->data.int8, input_96x96, n);
     }
 
-    if (s_interpreter->Invoke() != kTfLiteOk) {
+    const uint32_t t0 = (uint32_t) millis();
+    const TfLiteStatus status = s_interpreter->Invoke();
+    const uint32_t t1 = (uint32_t) millis();
+    ESP_LOGI("VISION", "TFLM_INVOKE: duration_ms=%u, arena_used=%u", (unsigned) (t1 - t0), (unsigned) s_interpreter->arena_used_bytes());
+
+    if (status != kTfLiteOk) {
         return false;
     }
 
