@@ -5,6 +5,7 @@
 #include <BLEDevice.h>
 #include <BLEScan.h>
 #include <BLEUtils.h>
+#include <esp_log.h>
 
 #include "config.h" // Use config.h for all configurations
 #include "audio/audio_preprocess.h"
@@ -439,6 +440,7 @@ class ServerHandler : public BLEServerCallbacks
         Serial.println(">>> BLE Client connected.");
         // Send current battery level on connect
         updateBatteryService();
+        ESP_LOGI("BLE_AUDIO", "BLE_AUDIO_BASELINE: mtu=%d, phy=%d, opus_bitrate=%d", (int) BLEDevice::getMTU(), 0, (int) OPUS_BITRATE);
     }
     void onDisconnect(BLEServer *server) override
     {
