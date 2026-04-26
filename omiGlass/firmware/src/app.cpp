@@ -11,6 +11,7 @@
 #include "audio/audio_preprocess.h"
 #include "esp_camera.h"
 #include "esp_sleep.h"
+#include "gatt/gatt_mtu_phy.h"
 #include "mic.h"
 #include "opus_encoder.h"
 #include "ota.h"
@@ -440,7 +441,13 @@ class ServerHandler : public BLEServerCallbacks
         Serial.println(">>> BLE Client connected.");
         // Send current battery level on connect
         updateBatteryService();
-        ESP_LOGI("BLE_AUDIO", "BLE_AUDIO_BASELINE: mtu=%d, phy=%d, opus_bitrate=%d", (int) BLEDevice::getMTU(), 0, (int) OPUS_BITRATE);
+        ESP_LOGI(
+            "BLE_AUDIO",
+            "BLE_AUDIO_BASELINE: mtu=%d, phy=%d, opus_bitrate=%d",
+            (int) BLEDevice::getMTU(),
+            gatt_mtu_phy_get_phy_mode_or_unknown(),
+            (int) OPUS_BITRATE
+        );
     }
     void onDisconnect(BLEServer *server) override
     {
@@ -600,6 +607,7 @@ void configure_ble()
 {
     Serial.println("Initializing BLE...");
     BLEDevice::init(BLE_DEVICE_NAME);
+    gatt_mtu_phy_init();
     BLEServer *server = BLEDevice::createServer();
     server->setCallbacks(new ServerHandler());
 
