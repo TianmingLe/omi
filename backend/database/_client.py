@@ -4,14 +4,36 @@ import os
 import uuid
 
 from google.cloud import firestore
+from google.auth.credentials import AnonymousCredentials
 
-if os.environ.get('SERVICE_ACCOUNT_JSON'):
-    service_account_info = json.loads(os.environ["SERVICE_ACCOUNT_JSON"])
-    # create google-credentials.json
-    with open('google-credentials.json', 'w') as f:
-        json.dump(service_account_info, f)
+class _MockCollection:
+    def stream(self):
+        return []
 
-db = firestore.Client()
+
+class _MockFirestore:
+    def collection(self, *_args, **_kwargs):
+        return _MockCollection()
+
+
+def _init_firestore_client():
+    emulator = os.environ.get("FIRESTORE_EMULATOR_HOST")
+    if emulator:
+        project = os.environ.get("FIRESTORE_PROJECT_ID", "demo-project")
+        return firestore.Client(project=project, credentials=AnonymousCredentials())
+
+    if os.environ.get("OMI_DEMO") == "1":
+        return _MockFirestore()
+
+    if os.environ.get("SERVICE_ACCOUNT_JSON"):
+        service_account_info = json.loads(os.environ["SERVICE_ACCOUNT_JSON"])
+        with open("google-credentials.json", "w") as f:
+            json.dump(service_account_info, f)
+
+    return firestore.Client()
+
+
+db = _init_firestore_client()
 
 
 def get_users_uid():
